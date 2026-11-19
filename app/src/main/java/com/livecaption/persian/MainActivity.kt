@@ -3,6 +3,11 @@ package com.livecaption.persian
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
+import android.os.Handler
+import android.os.Looper
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -17,8 +22,11 @@ import android.speech.SpeechRecognizer
 import android.view.Gravity
 import android.view.View
 import android.widget.*
+import android.graphics.ColorFilter
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
 
-/** Polished Persian-first prototype UI. ASR/translation engines are not yet connected. */
+/** Persian-first interface with microphone speech recognition and on-device text translation. */
 class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var original: TextView
@@ -26,10 +34,37 @@ class MainActivity : Activity() {
     private lateinit var modeGroup: RadioGroup
     private var recognizer: SpeechRecognizer? = null
     private val requestAudio = 41
+    private val requestInternalAudioPermission = 42
     private var originalText = "صدای موردنظر را پخش کن و دریافت صدا را شروع کن."
     private var translatedText = "ترجمه پس از اتصال موتور ترجمه در این قسمت نمایش داده می‌شود."
     private var displayMode = 2 // 0=original, 1=translation, 2=both
     private var targetLanguage = "فارسی"
+    private var captionFontSize = 20f
+    private var captionTextColor = Color.WHITE
+    private var captionOutlineColor = Color.BLACK
+    private var captionOutlineWidth = 2f
+    private var captionShadow = true
+    private var translator: CaptionTranslator? = null
+    private var micListening = false
+    private var captureReceiverRegistered = false
+    private val translationHandler = Handler(Looper.getMainLooper())
+    private var translationTask: Runnable? = null
+    private var lastTranslatedInput = ""
+    private val captureReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                PlaybackCaptureService.ACTION_STATUS -> status.text = intent.getStringExtra(PlaybackCaptureService.EXTRA_TEXT) ?: ""
+                PlaybackCaptureService.ACTION_TRANSCRIPT -> {
+                    val text = intent.getStringExtra(PlaybackCaptureService.EXTRA_TEXT).orEmpty()
+                    if (text.isNotBlank()) {
+                        originalText = text
+                        refreshCaptions()
+                        if (intent.getBooleanExtra(PlaybackCaptureService.EXTRA_FINAL, false)) translateWhenReady(text)
+                    }
+                }
+            }
+        }
+    }
 
     private val ink = Color.rgb(27, 35, 53)
     private val muted = Color.rgb(112, 123, 145)
@@ -38,6 +73,13 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val captureFilter = IntentFilter().apply {
+            addAction(PlaybackCaptureService.ACTION_TRANSCRIPT)
+            addAction(PlaybackCaptureService.ACTION_STATUS)
+        }
+        @Suppress("DEPRECATION")
+        registerReceiver(captureReceiver, captureFilter)
+        captureReceiverRegistered = true
         window.statusBarColor = Color.rgb(35, 33, 79)
         window.navigationBarColor = Color.rgb(248, 249, 253)
         window.decorView.systemUiVisibility = 0
@@ -86,7 +128,7 @@ class MainActivity : Activity() {
         }
         hero.addView(headline)
         val sub = TextView(this).apply {
-            text = "متن اصلی، ترجمه یا هر دو؛ هم‌زمان با پخش صدا"
+            text = "صدای فارسی؛ متن اصلی، ترجمه یا هر دو روی صفحه"
             textSize = 13f; setTextColor(Color.rgb(226, 224, 255)); gravity = Gravity.RIGHT
         }
         hero.addView(sub)
@@ -106,7 +148,7 @@ class MainActivity : Activity() {
         statusRow.addView(statusText)
         statusCard.addView(statusRow)
         status = TextView(this).apply {
-            text = "آماده دریافت صدا"; textSize = 13f; setTextColor(muted); gravity = Gravity.RIGHT
+            text = "آماده دریافت صدا؛ مدل فارسی در اولین استفاده دانلود می‌شود."; textSize = 13f; setTextColor(muted); gravity = Gravity.RIGHT
             setPadding(0, dp(12), 0, 0)
         }
         statusCard.addView(status)
@@ -116,13 +158,13 @@ class MainActivity : Activity() {
         content.addView(sectionTitle("منبع دریافت صدا", "از صدای برنامه‌ها یا میکروفون استفاده کن"))
         val internal = actionButton("◖))  دریافت صدای داخلی گوشی", purple)
         content.addView(internal, margin(-1, dp(10), 0, 9))
-        val mic = actionButton("🎙  دریافت صدا از میکروفون", Color.rgb(38, 151, 145))
+        val mic = actionButton("🎙  شروع زیرنویس از میکروفون", Color.rgb(38, 151, 145))
         content.addView(mic, margin(-1, 0, 0, 9))
         val overlayButton = actionButton("▣  فعال‌سازی زیرنویس شناور روی برنامه‌ها", Color.rgb(46, 63, 91))
         content.addView(overlayButton, margin(-1, 0, 0, 16))
 
         // Language selection
-        content.addView(sectionTitle("زبان‌ها", "زبان ورودی به‌صورت خودکار تشخیص داده می‌شود"))
+        content.addView(sectionTitle("زبان‌ها", "تشخیص صدای داخلی در این نسخه: فارسی؛ زبان مقصد قابل انتخاب است"))
         val langCard = card()
         val langLabel = TextView(this).apply { text = "زبان مقصد ترجمه"; textSize = 13f; setTextColor(muted); gravity = Gravity.RIGHT }
         langCard.addView(langLabel)
@@ -133,8 +175,12 @@ class MainActivity : Activity() {
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
                     targetLanguage = languages[position]
-                    translatedText = "زبان مقصد: $targetLanguage — موتور ترجمه هنوز متصل نشده است."
+                    translatedText = "ترجمه به $targetLanguage در حال آماده‌سازی است."
+                    lastTranslatedInput = ""
                     refreshCaptions()
+                    if (originalText.isNotBlank() && !originalText.startsWith("صدای موردنظر")) {
+                        translateWhenReady(originalText)
+                    }
                 }
                 override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
             }
@@ -163,6 +209,59 @@ class MainActivity : Activity() {
         modeCard.addView(modeGroup)
         content.addView(modeCard, margin(-1, dp(10), 0, 16))
 
+        // Caption appearance controls
+        content.addView(sectionTitle("ظاهر زیرنویس شناور", "پس‌زمینه کاملاً شفاف؛ تنظیم متن، دورخط و سایه"))
+        val appearance = card()
+        val sizeLabel = TextView(this).apply { text = "اندازه نوشته: ۲۰"; textSize = 13f; setTextColor(ink); gravity = Gravity.RIGHT }
+        appearance.addView(sizeLabel)
+        val sizeSeek = SeekBar(this).apply {
+            max = 22; progress = 8
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    captionFontSize = (12 + progress).toFloat(); sizeLabel.text = "اندازه نوشته: ${captionFontSize.toInt()}"; refreshCaptions()
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            })
+        }
+        appearance.addView(sizeSeek)
+        val outlineLabel = TextView(this).apply { text = "ضخامت دورخط: ۲"; textSize = 13f; setTextColor(ink); gravity = Gravity.RIGHT }
+        appearance.addView(outlineLabel)
+        val outlineSeek = SeekBar(this).apply {
+            max = 6; progress = 2
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    captionOutlineWidth = progress.toFloat(); outlineLabel.text = "ضخامت دورخط: $progress"; refreshCaptions()
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            })
+        }
+        appearance.addView(outlineSeek)
+        val styleRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val colorButton = actionButton("رنگ نوشته", purple).apply {
+            setOnClickListener {
+                val colors = intArrayOf(Color.WHITE, Color.YELLOW, Color.CYAN, Color.GREEN, Color.rgb(255, 170, 190))
+                val next = (colors.indexOf(captionTextColor) + 1).let { if (it <= 0) 1 else it }
+                captionTextColor = colors[next % colors.size]; refreshCaptions()
+            }
+        }
+        val outlineColorButton = actionButton("رنگ دورخط", Color.rgb(65, 78, 105)).apply {
+            setOnClickListener {
+                val colors = intArrayOf(Color.BLACK, Color.WHITE, Color.rgb(30, 80, 190), Color.rgb(150, 30, 30))
+                captionOutlineColor = colors[(colors.indexOf(captionOutlineColor) + 1).let { if (it <= 0) 1 else it } % colors.size]
+                refreshCaptions()
+            }
+        }
+        val shadowButton = actionButton("سایه: روشن", teal).apply {
+            setOnClickListener { captionShadow = !captionShadow; text = if (captionShadow) "سایه: روشن" else "سایه: خاموش"; refreshCaptions() }
+        }
+        styleRow.addView(colorButton, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(5) })
+        styleRow.addView(outlineColorButton, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(5) })
+        styleRow.addView(shadowButton, LinearLayout.LayoutParams(0, -2, 1f))
+        appearance.addView(styleRow)
+        content.addView(appearance, margin(-1, dp(10), 0, 16))
+
         // Caption preview
         content.addView(sectionTitle("پیش‌نمایش زیرنویس", "نمایش نمونه از چیدمان خروجی"))
         val preview = LinearLayout(this).apply {
@@ -189,14 +288,29 @@ class MainActivity : Activity() {
         refreshCaptions()
 
         val note = TextView(this).apply {
-            text = "نکته: این نسخه، پوسته گرافیکی و کنترل‌های برنامه است. موتورهای تشخیص چندزبانه و ترجمه هنوز باید به پروژه متصل و روی گوشی آزمایش شوند. صدای داخلی فقط از برنامه‌هایی قابل دریافت است که اندروید اجازه ضبط آن‌ها را بدهد."
+            text = "تشخیص گفتار فارسی با مدل آفلاین Vosk انجام می‌شود؛ دانلود اولیه مدل (حدود ۵۳ مگابایت) به اینترنت نیاز دارد. ترجمه با مدل‌های ML Kit روی دستگاه انجام می‌شود و مدل زبان مقصد نیز بار اول دانلود می‌شود. صدای داخلی فقط از برنامه‌هایی قابل دریافت است که ضبط آن را مجاز کرده باشند."
             textSize = 12f; setTextColor(muted); gravity = Gravity.RIGHT; setLineSpacing(dp(3).toFloat(), 1f)
             setPadding(dp(4), dp(4), dp(4), dp(12))
         }
         content.addView(note)
         setContentView(page)
 
-        mic.setOnClickListener { beginMicRecognition() }
+        translator = CaptionTranslator(
+            onResult = { result -> runOnUiThread { translatedText = result; refreshCaptions() } },
+            onStatus = { message -> runOnUiThread { status.text = message } }
+        )
+        mic.setOnClickListener {
+            if (micListening) {
+                micListening = false
+                try { recognizer?.stopListening() } catch (_: Exception) { }
+                try { recognizer?.cancel() } catch (_: Exception) { }
+                mic.text = "🎙  شروع زیرنویس از میکروفون"
+                status.text = "دریافت صدای میکروفون متوقف شد."
+            } else {
+                mic.text = "■  توقف دریافت میکروفون"
+                beginMicRecognition()
+            }
+        }
         internal.setOnClickListener { requestInternalCapture() }
         overlayButton.setOnClickListener { enableFloatingCaptions() }
     }
@@ -236,6 +350,16 @@ class MainActivity : Activity() {
         text = textValue; textSize = 11f; setTextColor(color); gravity = Gravity.RIGHT
     }
 
+    private fun translateWhenReady(text: String) {
+        if (text.isBlank() || text == lastTranslatedInput) return
+        translationTask?.let { translationHandler.removeCallbacks(it) }
+        translationTask = Runnable {
+            lastTranslatedInput = text
+            translator?.translate(text, targetLanguage)
+        }
+        translationHandler.postDelayed(translationTask!!, 450)
+    }
+
     private fun beginMicRecognition() {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             status.text = "تشخیص گفتار سیستمی در این دستگاه در دسترس نیست."; return
@@ -246,27 +370,48 @@ class MainActivity : Activity() {
         recognizer?.destroy()
         recognizer = SpeechRecognizer.createSpeechRecognizer(this).also { sr ->
             sr.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) { status.text = "در حال شنیدن صدای میکروفون" }
+                override fun onReadyForSpeech(params: Bundle?) { micListening = true; status.text = "در حال شنیدن صدای میکروفون" }
                 override fun onBeginningOfSpeech() {}
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() { status.text = "گفتار پایان یافت؛ برای شروع دوباره لمس کن" }
-                override fun onError(error: Int) { status.text = "خطای تشخیص گفتار: $error" }
-                override fun onResults(results: Bundle?) { showResult(results) }
+                override fun onEndOfSpeech() { status.text = "در حال پردازش گفتار…" }
+                override fun onError(error: Int) {
+                    if (micListening && error != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                        scheduleMicRestart(sr, 500)
+                    } else status.text = "خطای تشخیص گفتار: $error"
+                }
+                override fun onResults(results: Bundle?) { showResult(results); scheduleMicRestart(sr, 250) }
                 override fun onPartialResults(partialResults: Bundle?) { showResult(partialResults) }
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             }
             sr.startListening(intent)
         }
     }
 
+    private fun scheduleMicRestart(sr: SpeechRecognizer, delay: Long) {
+        status.postDelayed({
+            if (micListening) try {
+                sr.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                })
+            } catch (_: Exception) { }
+        }, delay)
+    }
+
     private fun showResult(bundle: Bundle?) {
         val text = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-        if (!text.isNullOrBlank()) { originalText = text; refreshCaptions() }
+        if (!text.isNullOrBlank()) {
+            originalText = text
+            refreshCaptions()
+            translateWhenReady(text)
+        }
     }
     private fun refreshCaptions() {
         if (!::original.isInitialized || !::translated.isInitialized) return
@@ -289,6 +434,11 @@ class MainActivity : Activity() {
             putExtra(FloatingCaptionService.EXTRA_TRANSLATED, translatedText)
             putExtra(FloatingCaptionService.EXTRA_MODE, displayMode)
             putExtra(FloatingCaptionService.EXTRA_TARGET, targetLanguage)
+            putExtra(FloatingCaptionService.EXTRA_FONT_SIZE, captionFontSize)
+            putExtra(FloatingCaptionService.EXTRA_TEXT_COLOR, captionTextColor)
+            putExtra(FloatingCaptionService.EXTRA_OUTLINE_COLOR, captionOutlineColor)
+            putExtra(FloatingCaptionService.EXTRA_OUTLINE_WIDTH, captionOutlineWidth)
+            putExtra(FloatingCaptionService.EXTRA_SHADOW, captionShadow)
         }
         startForegroundService(service)
         status.text = "زیرنویس شناور فعال شد؛ حالا می‌توانی به برنامه دیگری بروی."
@@ -302,11 +452,21 @@ class MainActivity : Activity() {
             putExtra(FloatingCaptionService.EXTRA_TRANSLATED, translatedText)
             putExtra(FloatingCaptionService.EXTRA_MODE, displayMode)
             putExtra(FloatingCaptionService.EXTRA_TARGET, targetLanguage)
+            putExtra(FloatingCaptionService.EXTRA_FONT_SIZE, captionFontSize)
+            putExtra(FloatingCaptionService.EXTRA_TEXT_COLOR, captionTextColor)
+            putExtra(FloatingCaptionService.EXTRA_OUTLINE_COLOR, captionOutlineColor)
+            putExtra(FloatingCaptionService.EXTRA_OUTLINE_WIDTH, captionOutlineWidth)
+            putExtra(FloatingCaptionService.EXTRA_SHADOW, captionShadow)
         }
         try { startService(update) } catch (_: Exception) { }
     }
 
     private fun requestInternalCapture() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            status.text = "برای دریافت صدای داخلی، ابتدا مجوز میکروفون/ضبط صدا لازم است."
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), requestInternalAudioPermission)
+            return
+        }
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         status.text = "برای دریافت صدای داخلی، مجوز ضبط صفحه/صدا را تأیید کن."
         startActivityForResult(manager.createScreenCaptureIntent(), 52)
@@ -319,8 +479,24 @@ class MainActivity : Activity() {
                 putExtra("resultCode", resultCode); putExtra("projectionData", data)
             }
             startForegroundService(service)
-            status.text = "مجوز صدای داخلی صادر شد؛ موتور تبدیل صدا به متن هنوز متصل نیست."
+            status.text = "مجوز صادر شد؛ مدل فارسی در حال آماده‌سازی است. در اولین اجرا اینترنت لازم است."
         } else if (requestCode == 52) status.text = "مجوز دریافت صدای داخلی لغو شد."
     }
-    override fun onDestroy() { recognizer?.destroy(); super.onDestroy() }
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == requestAudio && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) beginMicRecognition()
+        else if (requestCode == requestAudio) status.text = "مجوز میکروفون داده نشد."
+        else if (requestCode == requestInternalAudioPermission && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) requestInternalCapture()
+        else if (requestCode == requestInternalAudioPermission) status.text = "بدون مجوز ضبط صدا، دریافت صدای داخلی ممکن نیست."
+    }
+
+    override fun onDestroy() {
+        micListening = false
+        translationTask?.let { translationHandler.removeCallbacks(it) }
+        if (captureReceiverRegistered) {
+            try { unregisterReceiver(captureReceiver) } catch (_: Exception) { }
+            captureReceiverRegistered = false
+        }
+        recognizer?.destroy(); translator?.close(); super.onDestroy()
+    }
 }

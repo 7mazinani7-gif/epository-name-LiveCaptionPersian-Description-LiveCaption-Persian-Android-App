@@ -20,8 +20,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 
-/** Floating caption surface. It stays above other apps after the user grants overlay permission.
- * Speech recognition and translation engines will publish real text in a later integration step. */
+/** Transparent, draggable caption surface above other apps after overlay permission is granted. */
 class FloatingCaptionService : Service() {
     companion object {
         const val ACTION_START = "com.livecaption.persian.FLOATING_START"
@@ -31,6 +30,11 @@ class FloatingCaptionService : Service() {
         const val EXTRA_TRANSLATED = "translated"
         const val EXTRA_MODE = "mode"
         const val EXTRA_TARGET = "target"
+        const val EXTRA_FONT_SIZE = "font_size"
+        const val EXTRA_TEXT_COLOR = "text_color"
+        const val EXTRA_OUTLINE_COLOR = "outline_color"
+        const val EXTRA_OUTLINE_WIDTH = "outline_width"
+        const val EXTRA_SHADOW = "shadow"
     }
 
     private lateinit var windowManager: WindowManager
@@ -44,6 +48,11 @@ class FloatingCaptionService : Service() {
     private var target = "فارسی"
     private var original = "زیرنویس زبان اصلی اینجا نمایش داده می‌شود."
     private var translated = "ترجمه در این قسمت نمایش داده می‌شود."
+    private var fontSize = 18f
+    private var textColor = Color.WHITE
+    private var outlineColor = Color.BLACK
+    private var outlineWidth = 2f
+    private var shadowEnabled = true
 
     override fun onCreate() {
         super.onCreate()
@@ -67,6 +76,11 @@ class FloatingCaptionService : Service() {
                 translated = intent.getStringExtra(EXTRA_TRANSLATED) ?: translated
                 currentMode = intent.getIntExtra(EXTRA_MODE, currentMode)
                 target = intent.getStringExtra(EXTRA_TARGET) ?: target
+                fontSize = intent.getFloatExtra(EXTRA_FONT_SIZE, fontSize).coerceIn(12f, 36f)
+                textColor = intent.getIntExtra(EXTRA_TEXT_COLOR, textColor)
+                outlineColor = intent.getIntExtra(EXTRA_OUTLINE_COLOR, outlineColor)
+                outlineWidth = intent.getFloatExtra(EXTRA_OUTLINE_WIDTH, outlineWidth).coerceIn(0f, 6f)
+                shadowEnabled = intent.getBooleanExtra(EXTRA_SHADOW, shadowEnabled)
                 if (Settings.canDrawOverlays(this)) {
                     if (panel == null) createPanel()
                     renderText()
@@ -79,9 +93,10 @@ class FloatingCaptionService : Service() {
     private fun createPanel() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(15), dp(12), dp(15), dp(12))
-            background = rounded(Color.argb(242, 24, 27, 43), 18)
-            elevation = dp(8).toFloat()
+            setPadding(dp(12), dp(7), dp(12), dp(7))
+            // Fully transparent surface: no dark rectangular subtitle panel.
+            setBackgroundColor(Color.TRANSPARENT)
+            elevation = 0f
         }
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         val title = TextView(this).apply {
@@ -99,7 +114,7 @@ class FloatingCaptionService : Service() {
         root.addView(originalTag)
         originalView = captionText()
         root.addView(originalView)
-        val divider = View(this).apply { setBackgroundColor(Color.rgb(75, 79, 100)) }
+        val divider = View(this).apply { setBackgroundColor(Color.TRANSPARENT) }
         root.addView(divider, LinearLayout.LayoutParams(-1, dp(1)))
         translatedTag = tag("ترجمه • $target", Color.rgb(105, 224, 205))
         root.addView(translatedTag)
@@ -138,6 +153,16 @@ class FloatingCaptionService : Service() {
     private fun renderText() {
         originalView?.text = original
         translatedView?.text = translated
+        listOfNotNull(originalView, translatedView).forEach { view ->
+            view.textSize = fontSize
+            view.setTextColor(textColor)
+            view.setShadowLayer(if (shadowEnabled) dp(3).toFloat() else 0f, 1f, 2f, Color.BLACK)
+            if (view is OutlinedCaptionTextView) {
+                view.outlineColor = outlineColor
+                view.outlineWidthPx = dp(outlineWidth.toInt()).toFloat()
+            }
+            view.invalidate()
+        }
         originalView?.visibility = if (currentMode == 1) View.GONE else View.VISIBLE
         originalTag?.visibility = if (currentMode == 1) View.GONE else View.VISIBLE
         translatedView?.visibility = if (currentMode == 0) View.GONE else View.VISIBLE
@@ -145,8 +170,9 @@ class FloatingCaptionService : Service() {
         translatedTag?.text = "ترجمه • $target"
     }
 
-    private fun captionText() = TextView(this).apply {
-        textSize = 16f; setTextColor(Color.WHITE); gravity = Gravity.RIGHT
+    private fun captionText() = OutlinedCaptionTextView(this).apply {
+        textSize = fontSize; setTextColor(textColor); gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL
+        textDirection = View.TEXT_DIRECTION_FIRST_STRONG_RTL
         setPadding(0, dp(6), 0, dp(9)); setLineSpacing(dp(2).toFloat(), 1f)
     }
     private fun tag(text: String, color: Int) = TextView(this).apply {
