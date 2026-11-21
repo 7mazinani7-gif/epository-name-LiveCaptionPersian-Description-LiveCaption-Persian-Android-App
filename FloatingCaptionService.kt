@@ -159,7 +159,7 @@ class FloatingCaptionService : Service() {
             view.setShadowLayer(if (shadowEnabled) dp(3).toFloat() else 0f, 1f, 2f, Color.BLACK)
             if (view is OutlinedCaptionTextView) {
                 view.outlineColor = outlineColor
-                view.outlineWidthPx = dp(outlineWidth.toInt()).toFloat()
+                view.outlineWidthPx = outlineWidth * resources.displayMetrics.density
             }
             view.invalidate()
         }

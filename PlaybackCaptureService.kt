@@ -116,9 +116,11 @@ class PlaybackCaptureService : Service() {
                     sendStatus("مدل ${selectedModel.label} آماده شد؛ دریافت و تبدیل صدای داخلی شروع شد.", true)
                 }
             } catch (e: Exception) {
-                Log.e("LiveCaption", "Vosk initialization failed", e)
-                sendStatus("آماده‌سازی مدل گفتار ناموفق بود: ${e.message ?: "خطا"}", false)
-                stopSelf()
+                if (!destroyed) {
+                    Log.e("LiveCaption", "Vosk initialization failed", e)
+                    sendStatus("آماده‌سازی مدل گفتار ناموفق بود: ${e.message ?: "خطا"}", false)
+                    stopSelf()
+                }
             }
         }
     }
@@ -235,8 +237,11 @@ class PlaybackCaptureService : Service() {
         recorder = AudioRecord.Builder().setAudioFormat(format).setBufferSizeInBytes(min * 2)
             .setAudioPlaybackCaptureConfig(config).build()
         if (recorder?.state != AudioRecord.STATE_INITIALIZED) throw IllegalStateException("AudioRecord راه‌اندازی نشد")
-        running = true
         recorder?.startRecording()
+        if (recorder?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+            throw IllegalStateException("AudioRecord شروع به ضبط نکرد")
+        }
+        running = true
         captureThread = thread(name = "playback-asr") {
             val shortBuffer = ShortArray(2048)
             val byteBuffer = ByteArray(shortBuffer.size * 2)
@@ -259,6 +264,11 @@ class PlaybackCaptureService : Service() {
                         }
                     } else if (count < 0) {
                         Log.w("LiveCaption", "AudioRecord read error: $count")
+                        if (count == AudioRecord.ERROR_DEAD_OBJECT ||
+                            count == AudioRecord.ERROR_INVALID_OPERATION ||
+                            count == AudioRecord.ERROR_BAD_VALUE) {
+                            throw IllegalStateException("AudioRecord read failed: $count")
+                        }
                         Thread.sleep(50)
                     }
                 }

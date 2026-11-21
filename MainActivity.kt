@@ -16,6 +16,7 @@ import android.media.projection.MediaProjectionManager
 import android.provider.Settings
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -91,8 +92,12 @@ class MainActivity : Activity() {
             addAction(PlaybackCaptureService.ACTION_TRANSCRIPT)
             addAction(PlaybackCaptureService.ACTION_STATUS)
         }
-        @Suppress("DEPRECATION")
-        registerReceiver(captureReceiver, captureFilter)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(captureReceiver, captureFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(captureReceiver, captureFilter)
+        }
         captureReceiverRegistered = true
         window.statusBarColor = Color.rgb(35, 33, 79)
         window.navigationBarColor = Color.rgb(248, 249, 253)
@@ -127,9 +132,12 @@ class MainActivity : Activity() {
             background = roundedGradient(intArrayOf(Color.rgb(43, 39, 103), Color.rgb(103, 77, 210)), 26)
         }
         val topLine = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        val logo = TextView(this).apply {
-            text = "ز"; textSize = 25f; gravity = Gravity.CENTER
-            setTextColor(Color.WHITE); background = rounded(Color.argb(45,255,255,255), 15)
+        val logo = ImageView(this).apply {
+            setImageResource(com.livecaption.persian.R.mipmap.ic_launcher)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            background = rounded(Color.argb(45, 255, 255, 255), 15)
+            contentDescription = "نشان LiveCaption Persian"
         }
         topLine.addView(logo, LinearLayout.LayoutParams(dp(48), dp(48)))
         val brand = TextView(this).apply {
@@ -318,6 +326,7 @@ class MainActivity : Activity() {
         preview.addView(originalTag)
         original = TextView(this).apply {
             text = originalText; textSize = 17f; setTextColor(Color.WHITE); gravity = Gravity.RIGHT
+            textDirection = View.TEXT_DIRECTION_FIRST_STRONG_RTL
             setPadding(0, dp(7), 0, dp(13))
         }
         preview.addView(original)
@@ -327,6 +336,7 @@ class MainActivity : Activity() {
         preview.addView(translationTag)
         translated = TextView(this).apply {
             text = translatedText; textSize = 16f; setTextColor(Color.rgb(222, 229, 243)); gravity = Gravity.RIGHT
+            textDirection = View.TEXT_DIRECTION_FIRST_STRONG_RTL
             setPadding(0, dp(7), 0, 0)
         }
         preview.addView(translated)
