@@ -1,4 +1,4 @@
-# LiveCaption Persian — نسخه ۰٫۹٫۳
+# LiveCaption Persian — نسخه ۰٫۹٫۴
 
 اپ اندرویدی زیرنویس زنده با رابط فارسی، دریافت صدای داخلیِ برنامه‌های سازگار، دریافت صدای میکروفون و نمایش زیرنویس شناور روی برنامه‌های دیگر.
 
@@ -29,8 +29,8 @@
 - compileSdk: 35
 - minSdk: 29 (Android 10)
 - targetSdk: 30
-- versionCode: 11
-- versionName: 0.9.3
+- versionCode: 12
+- versionName: 0.9.4
 
 ## ساخت APK با GitHub Actions
 فایل `.github/workflows/build-apk.yml` با push به شاخه `main` یا اجرای دستی `workflow_dispatch`، دستور `gradle assembleDebug` را اجرا و APK را به‌عنوان Artifact بارگذاری می‌کند. مسیر خروجی: `app/build/outputs/apk/debug/app-debug.apk`.
@@ -42,3 +42,8 @@
 - مجوزهای RECORD_AUDIO، INTERNET، SYSTEM_ALERT_WINDOW و foreground service برای MediaProjection.
 
 **توجه:** سورس اصلاح‌شده به معنی APK ساخته‌شده یا تست‌شده نیست. برای تأیید نهایی باید GitHub Actions با موفقیت اجرا شود، APK نصب شود و دریافت صدای داخلی و پنجره شناور روی گوشی واقعی آزمایش شوند.
+
+
+## روش جایگزینی در GitHub
+
+این ZIP را ابتدا در گوشی/رایانه استخراج کنید. سپس **محتویات داخل ZIP** را با حفظ ساختار پوشه‌ها در ریشه شاخه `main` مخزن بارگذاری کنید و فایل‌های هم‌مسیر قدیمی را جایگزین کنید. خود فایل ZIP را به‌تنهایی در مخزن آپلود نکنید. پس از Commit، در GitHub Actions باید مرحله بررسی سورس، عبارت `versionName = "0.9.4"` را پیدا کند و Artifact با نام `LiveCaptionPersian-v0.9.4-debug-apk` ساخته شود.

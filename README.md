@@ -1,4 +1,4 @@
-# LiveCaption Persian — v0.9.3
+# LiveCaption Persian — v0.9.4
 
 A Persian-first Android live-caption app with a transparent floating overlay, internal playback capture for compatible apps, microphone speech recognition, and on-device translation.
 
@@ -24,6 +24,6 @@ A Persian-first Android live-caption app with a transparent floating overlay, in
 ## Build configuration
 - Android Gradle Plugin 8.7.3; Kotlin 2.0.21; Gradle 8.9; JDK 17
 - compileSdk 35; minSdk 29; targetSdk 30
-- versionCode 11; versionName 0.9.3
+- versionCode 12; versionName 0.9.4
 
 GitHub Actions builds a debug APK on pushes to `main` or via manual `workflow_dispatch`, then uploads `app/build/outputs/apk/debug/app-debug.apk` as an artifact. See [README_FA.md](README_FA.md) for detailed Persian notes.
